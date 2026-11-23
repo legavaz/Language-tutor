@@ -1,0 +1,13 @@
+# Единые переводы строк: в репозитории LF, чтобы скрипты и Dockerfile
+# одинаково работали на Linux-хосте.
+* text=auto eol=lf
+
+# Windows-скрипты — CRLF
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Бинарные/служебные файлы без нормализации
+silence.b64 -text
+*.crt -text
+*.key -text

@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Произношение — Напарник</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.55 system-ui, -apple-system, sans-serif; max-width: 760px; margin: 28px auto; padding: 0 16px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { opacity: .7; font-size: 14px; margin-bottom: 20px; }
+  button { font-size: 16px; padding: 12px 20px; border-radius: 10px; border: 1px solid #888; background: #f4f4f5; color: #111; cursor: pointer; }
+  body.dark button { background: #27272a; color: #fafafa; border-color: #52525b; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.rec { background: #dc2626; color: #fff; border-color: #dc2626; }
+  input[type=text] { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 10px; border: 1px solid #999; font-size: 15px; background: transparent; color: inherit; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 14px 0; }
+  .score { font-size: 34px; font-weight: 600; }
+  .score small { font-size: 15px; font-weight: 400; opacity: .7; }
+  .words { margin: 18px 0; line-height: 2.1; }
+  .w { display: inline-block; padding: 2px 8px; margin: 0 3px 4px 0; border-radius: 8px; font-size: 17px; }
+  .good { background: #dcfce7; color: #14532d; }
+  .mid { background: #fef9c3; color: #713f12; }
+  .weak { background: #fee2e2; color: #7f1d1d; }
+  body.dark .good { background: #14532d; color: #dcfce7; }
+  body.dark .mid { background: #713f12; color: #fef9c3; }
+  body.dark .weak { background: #7f1d1d; color: #fee2e2; }
+  .hint { font-size: 14px; opacity: .75; }
+  .err { color: #b91c1c; }
+  ul { padding-left: 20px; }
+</style>
+</head>
+<body>
+<h1>Проверка произношения</h1>
+<div class="sub">Скажи фразу по-английски и посмотри, какие слова распознались уверенно, а какие — нет.</div>
+
+<div class="row">
+  <input type="text" id="target" placeholder="Необязательно: эталонная фраза, которую читаешь">
+</div>
+<div class="row">
+  <button id="rec">🎙 Начать запись</button>
+  <button id="send" disabled>Проверить</button>
+  <span id="status" class="hint"></span>
+</div>
+
+<div id="out"></div>
+
+<p class="hint" id="foot"></p>
+
+<script>
+const recBtn = document.getElementById('rec');
+const sendBtn = document.getElementById('send');
+const statusEl = document.getElementById('status');
+const out = document.getElementById('out');
+const targetEl = document.getElementById('target');
+let recorder = null, chunks = [], blob = null, timer = null;
+
+if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+  document.body.classList.add('dark');
+}
+
+if (!navigator.mediaDevices || !window.MediaRecorder) {
+  statusEl.innerHTML = '<span class="err">Браузер не даёт доступ к микрофону: нужен HTTPS</span>';
+  recBtn.disabled = true;
+}
+
+recBtn.onclick = async () => {
+  if (recorder && recorder.state === 'recording') {
+    recorder.stop();
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    chunks = [];
+    recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = e => chunks.push(e.data);
+    recorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+      recBtn.textContent = '🎙 Начать запись';
+      recBtn.classList.remove('rec');
+      sendBtn.disabled = false;
+      statusEl.textContent = 'запись готова, нажми «Проверить»';
+    };
+    recorder.start();
+    recBtn.textContent = '⏹ Остановить';
+    recBtn.classList.add('rec');
+    sendBtn.disabled = true;
+    let left = 10;
+    statusEl.textContent = 'говори… (до 10 с)';
+    timer = setInterval(() => {
+      left -= 1;
+      statusEl.textContent = 'говори… осталось ' + left + ' с';
+      if (left <= 0) { clearInterval(timer); recorder.stop(); }
+    }, 1000);
+  } catch (e) {
+    statusEl.innerHTML = '<span class="err">' + e.name + ': ' + e.message + '</span>';
+  }
+};
+
+sendBtn.onclick = async () => {
+  if (!blob) return;
+  clearInterval(timer);
+  sendBtn.disabled = true;
+  statusEl.textContent = 'считаю…';
+  out.innerHTML = '';
+  const fd = new FormData();
+  fd.append('file', blob, 'rec.webm');
+  fd.append('target', targetEl.value || '');
+  try {
+    const r = await fetch('score', { method: 'POST', body: fd });
+    const d = await r.json();
+    render(d);
+  } catch (e) {
+    out.innerHTML = '<p class="err">ошибка: ' + e.message + '</p>';
+  } finally {
+    statusEl.textContent = '';
+    sendBtn.disabled = false;
+  }
+};
+
+function render(d) {
+  if (d.error) { out.innerHTML = '<p class="err">' + d.error + '</p>'; return; }
+  const pct = Math.round((d.overall || 0) * 100);
+  let html = '<div class="score">' + pct + '<small> / 100 — средняя уверенность</small></div>';
+  html += '<div class="words">';
+  for (const w of d.words) {
+    const cls = w.prob >= 0.8 ? 'good' : (w.prob >= 0.55 ? 'mid' : 'weak');
+    html += '<span class="w ' + cls + '" title="уверенность ' + w.prob + '">' + w.word + '</span>';
+  }
+  html += '</div>';
+  if (d.weak && d.weak.length) {
+    html += '<p><b>Стоит повторить:</b> ' + d.weak.map(w => w.word + ' (' + w.prob + ')').join(', ') + '</p>';
+  } else {
+    html += '<p>Все слова распознаны уверенно.</p>';
+  }
+  if (d.target) {
+    if (d.missing && d.missing.length) html += '<p><b>Не прозвучало / исказилось:</b> ' + d.missing.join(', ') + '</p>';
+    if (d.extra && d.extra.length) html += '<p><b>Лишнее:</b> ' + d.extra.join(', ') + '</p>';
+    if (!(d.missing || []).length && !(d.extra || []).length) html += '<p>С эталонной фразой совпало полностью.</p>';
+  }
+  html += '<p class="hint">Оценка — уверенность распознавания, а не фонемный разбор. На неё влияют шум и громкость: говори ближе к микрофону.</p>';
+  out.innerHTML = html;
+}
+</script>
+</body>
+</html>

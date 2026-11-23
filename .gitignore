@@ -1,0 +1,25 @@
+# Секреты и локальные артефакты — в репозиторий не попадают
+.env
+credentials*
+*.crt
+*.key
+*.pem
+
+# Локальные файлы этой машины
+lite-kit.json
+tunnel.ps1
+caddy-root.crt
+
+# Логи и данные
+*.log
+run/
+data/
+log/
+
+# Оси и редакторы
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+__pycache__/
+*.pyc

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Проверка микрофона — Напарник</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 24px auto; max-width: 820px; padding: 0 16px; color: #111; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .hint { color: #555; font-size: 13px; margin-bottom: 16px; }
+  button { font-size: 15px; padding: 10px 18px; border: 1px solid #333; border-radius: 8px; background: #f4f4f5; cursor: pointer; }
+  button:active { background: #e4e4e7; }
+  pre { background: #0f172a; color: #e2e8f0; padding: 14px; border-radius: 10px; overflow: auto; font-size: 13px; min-height: 180px; white-space: pre-wrap; }
+  .bad { color: #b91c1c; }
+  .good { color: #15803d; }
+</style>
+</head>
+<body>
+<h1>Проверка микрофона</h1>
+<div class="hint">
+  Страница на том же адресе, что и Open WebUI, поэтому показывает ровно те же ограничения браузера.
+  Нажми кнопку и разреши доступ, когда браузер спросит.
+</div>
+<button id="btn">Проверить микрофон (3 секунды записи)</button>
+<pre id="out"></pre>
+<script>
+const out = document.getElementById("out");
+const log = (...a) => { out.textContent += a.join(" ") + "\n"; };
+
+log("origin:          " + location.origin);
+log("isSecureContext: " + window.isSecureContext +
+    (window.isSecureContext ? "  (ок)" : "  (ПЛОХО: нужен флаг или HTTPS)"));
+log("mediaDevices:    " + !!navigator.mediaDevices);
+log("браузер:         " + navigator.userAgent);
+log("");
+
+document.getElementById("btn").onclick = async () => {
+  out.textContent = out.textContent.split("\n").slice(0, 5).join("\n") + "\n\n";
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      log("ОШИБКА: getUserMedia недоступен (страница не в безопасном контексте или старый браузер)");
+      return;
+    }
+
+    try {
+      const p = await navigator.permissions.query({ name: "microphone" });
+      log("разрешение сайта: " + p.state);
+    } catch (e) {
+      log("разрешение сайта: (API не поддерживает запрос состояния)");
+    }
+
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const inputs = devices.filter(d => d.kind === "audioinput");
+    log("устройств записи: " + inputs.length);
+    inputs.forEach((d, i) => log("  [" + i + "] " + (d.label || "(без имени — нет разрешения)") + "  id=" + d.deviceId.slice(0, 12)));
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const track = stream.getAudioTracks()[0];
+    log("");
+    log("ПОТОК ПОЛУЧЕН: " + (track.label || "(без имени)"));
+    log("настройки: " + JSON.stringify(track.getSettings()));
+
+    const ctx = new AudioContext();
+    const src = ctx.createMediaStreamSource(stream);
+    const an = ctx.createAnalyser();
+    an.fftSize = 2048;
+    src.connect(an);
+    const buf = new Float32Array(an.fftSize);
+    let max = 0;
+    const t0 = performance.now();
+    log("говори что-нибудь 3 секунды...");
+    while (performance.now() - t0 < 3000) {
+      await new Promise(r => setTimeout(r, 100));
+      an.getFloatTimeDomainData(buf);
+      for (let i = 0; i < buf.length; i++) max = Math.max(max, Math.abs(buf[i]));
+    }
+    log("");
+    log("макс. уровень: " + max.toFixed(4) +
+        (max < 0.002 ? "  → ТИШИНА: микрофон молчит или выбран не тот вход"
+                     : "  → звук идёт, микрофон работает"));
+
+    stream.getTracks().forEach(t => t.stop());
+    await ctx.close();
+  } catch (e) {
+    log("");
+    log("ОШИБКА: " + e.name + " — " + e.message);
+    const map = {
+      NotAllowedError: "браузер или Windows запретили доступ: проверить разрешение сайта (замок в адресной строке) и Приватность → Микрофон",
+      NotFoundError: "в системе нет ни одного устройства записи",
+      NotReadableError: "устройство занято другим приложением (Zoom, Discord, Teams, OBS) или сбой драйвера",
+      OverconstrainedError: "неподходящие параметры устройства",
+      SecurityError: "небезопасный origin: флаг не применился или браузер не перезапущен",
+      AbortError: "запрос прерван"
+    };
+    log("пояснение: " + (map[e.name] || "см. название ошибки"));
+  }
+};
+</script>
+</body>
+</html>

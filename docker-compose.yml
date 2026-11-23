@@ -1,0 +1,98 @@
+﻿name: naparnik
+
+services:
+  open-webui:
+    # Пин по digest: тег :main меняется молча, а v0.13.4 из реестра собран
+    # с битым healthcheck. Именно эта сборка проверена end-to-end.
+    image: ghcr.io/open-webui/open-webui@sha256:d6c085678f7e3f474aa2a92ac9831cb68759dcfd951de250ebbb37dac5cd0255
+    container_name: naparnik-webui
+    restart: unless-stopped
+    ports:
+      # Прямой HTTP-доступ в LAN — резервный. Основной вход: https:// через Caddy.
+      # Только локально: "127.0.0.1:3000:8080"
+      - "${WEBUI_HTTP_PORT:-3000}:8080"
+    volumes:
+      - webui_data:/app/backend/data
+      # Страница проверки микрофона и secure context
+      - ./mictest.html:/app/build/mictest.html:ro
+    environment:
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY}
+      WEBUI_URL: ${WEBUI_PUBLIC_URL}
+      ENABLE_SIGNUP: "false"
+      OPENAI_API_BASE_URL: ${OPENAI_API_BASE_URL}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ENABLE_OPENAI_API: "true"
+      DEFAULT_MODELS: ${DEFAULT_MODEL}
+      # В 0.13.4 роль user видит модель только при явном гранте доступа.
+      # Для домашнего инстанса проще снять фильтр целиком.
+      BYPASS_MODEL_ACCESS_CONTROL: "true"
+      # STT: локальный faster-whisper. Здесь «локальный» движок = пустая строка,
+      # отдельного значения "whisper" в коде нет.
+      WHISPER_MODEL: base
+      # Без VAD Whisper на тишине может молотить 30-60 секунд.
+      WHISPER_VAD_FILTER: "true"
+      # TTS: серверный, через контейнер naparnik-tts. Переменные задают только
+      # умолчания при первой инициализации базы.
+      AUDIO_TTS_ENGINE: openai
+      AUDIO_TTS_OPENAI_API_BASE_URL: http://naparnik-tts:4000/v1
+      AUDIO_TTS_OPENAI_API_KEY: ${TTS_API_KEY}
+      AUDIO_TTS_MODEL: tts-1
+      AUDIO_TTS_VOICE: ${TTS_VOICE}
+
+  tts:
+    # OpenAI-совместимый синтез речи на нейронных голосах Microsoft Edge.
+    # Собирается из tts.Dockerfile: в готовом образе старая edge-tts, которую
+    # Microsoft уже не пускает (403 на рукопожатие).
+    build:
+      context: .
+      dockerfile: tts.Dockerfile
+    image: naparnik-tts:local
+    container_name: naparnik-tts
+    restart: unless-stopped
+    environment:
+      PORT: "4000"
+      API_KEY: ${TTS_API_KEY}
+      DEFAULT_VOICE: ${TTS_VOICE}
+      DEFAULT_RESPONSE_FORMAT: mp3
+
+  pron:
+    # Оценка произношения: тот же Whisper, отдельная страница /pron/
+    build:
+      context: .
+      dockerfile: pron.Dockerfile
+    image: naparnik-pron:local
+    container_name: naparnik-pron
+    restart: unless-stopped
+    volumes:
+      # Тот же том, что у webui: используем уже скачанную модель Whisper
+      - webui_data:/data
+    environment:
+      WHISPER_MODEL: base
+      WHISPER_MODEL_DIR: /data/cache/whisper/models
+      WEAK_THRESHOLD: "0.55"
+    healthcheck:
+      # Базовый образ тащит healthcheck на порт 8080 — здесь порт 8000.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    image: caddy@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
+    container_name: naparnik-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  webui_data:
+  caddy_data:
+  caddy_config:

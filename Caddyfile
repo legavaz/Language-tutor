@@ -1,0 +1,39 @@
+# HTTPS для «Напарника».
+#
+# Адрес берётся из переменной SITE_ADDRESS (в .env): это либо IP машины,
+# либо DNS-имя, которые резолвится на неё.
+#
+# Сертификат выпускает внутренний CA самого Caddy (tls internal), поэтому
+# на каждом клиентском устройстве нужно один раз установить корневой
+# сертификат в «Доверенные корневые центры сертификации». Скачать его можно
+# с этого же сервера: https://<SITE_ADDRESS>/caddy-root.crt
+#
+# default_sni обязателен: по IP-адресу клиенты (браузеры, curl) не передают
+# SNI, и без этой директивы Caddy не может выбрать сертификат и рвёт
+# рукопожатие с «TLS alert internal error».
+
+{
+	default_sni {$SITE_ADDRESS}
+}
+
+https://{$SITE_ADDRESS} {
+	tls internal
+	encode gzip
+
+	# Корневой сертификат Caddy для установки на клиентах.
+	handle /caddy-root.crt {
+		header Content-Type application/x-x509-ca-cert
+		header Content-Disposition attachment; filename="caddy-root.crt"
+		root * /data/caddy/pki/authorities/local
+		rewrite * /root.crt
+		file_server
+	}
+
+	# Оценка произношения (отдельный сервис)
+	handle /pron/* {
+		uri strip_prefix /pron
+		reverse_proxy naparnik-pron:8000
+	}
+
+	reverse_proxy naparnik-webui:8080
+}
