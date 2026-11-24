@@ -10,6 +10,9 @@ lite-kit.json
 tunnel.ps1
 caddy-root.crt
 
+# Личная программа обучения — публиковать не нужно
+learning/
+
 # Логи и данные
 *.log
 run/
